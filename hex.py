@@ -1,5 +1,4 @@
 import random
-import time
 
 
 player1 = 1
@@ -132,22 +131,20 @@ class Hex:
         return "\n".join(lines)
 
 
-N = 11
+if __name__ == "__main__":
 
-game = Hex(N)
+    def play(N, verbose=False):
+        moves = [index for index in range(N**2)]
+        random.shuffle(moves)
+        game = Hex(N)
+        player = 1
+        for index in moves:
+            if game.move(index, player):
+                if verbose:
+                    print(game)
+                    count = sum(cell != 0 for cell in game.board)
+                    print(f"player { {1:1, -1: 2}[player]} wins after {count} moves")
+                break
+            player = -player
 
-moves = [index for index in range(N**2)]
-random.shuffle(moves)
-
-player = 1
-t0 = time.time()
-for index in moves:
-    if game.move(index, player):
-        t1 = time.time()
-        print(game)
-        moves = sum(cell != 0 for cell in game.board)
-        print(
-            f"player { {1:1, -1: 2}[player]} wins after {moves} moves {moves/(t1-t0):.1f} per second"
-        )
-        break
-    player = -player
+    play(11, True)
