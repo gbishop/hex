@@ -43,7 +43,7 @@ class UnionFind:
         return False  # Already in the same set
 
 
-class Hex:
+class HexGame:
     def __init__(self, size: int):
         S = self.size = size
 
