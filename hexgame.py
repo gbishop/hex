@@ -143,3 +143,28 @@ class HexGame:
             line = " " * r + " ".join(chars[c] for c in self.board[index : index + S])
             lines.append(line)
         return "\n".join(lines)
+
+    def test(self, layout: str):
+        layout = layout.replace(" ", "").replace("\n", "")
+        win = False
+        for i, c in enumerate(layout):
+            if c == "O":
+                win = self.move(i, player2)
+                if win:
+                    print("O wins")
+            elif c == "X":
+                win = self.move(i, player1)
+                if win:
+                    print("X wins")
+        print("no win")
+
+
+if __name__ == "__main__":
+    game = HexGame(5)
+    layout = """
+_ O _ O _
+ O O X O O
+  X O X X X
+   O X X _ X
+    O X O X _"""
+    game.test(layout)
