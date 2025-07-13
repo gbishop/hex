@@ -1,0 +1,40 @@
+  Grid {
+      layout: grid;
+      grid-size: 14 5;
+      grid-columns: 1fr;
+      grid-rows: 5;
+      grid-gutter: 0;
+  }
+  Grid Button {
+      column-span: 2;
+      padding: 1;
+      height: 5;
+  }
+  Button.even {
+    background: #444444;
+  }
+  Button.odd {
+    background: #555555;
+  }
+  Button.even.X {
+    background: #DD4444;
+  }
+  Button.odd.X {
+    background: #FF5555;
+  }
+  Button.even.O {
+    background: #4444DD;
+  }
+  Button.odd.O {
+    background: #5555FF;
+  }
+  Container {
+    border-left: solid blue;
+    border-right: solid blue;
+    border-top: solid red;
+    border-bottom: solid red;
+    height: 27;
+  }
+  Static {
+  }
+
