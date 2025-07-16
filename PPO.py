@@ -3,6 +3,7 @@ from hexgame import HexGame, player2
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3.common.callbacks import EventCallback
 import numpy as np
 from typing import cast
 import os
@@ -16,17 +17,17 @@ SIZE = 5
 DIR = "MaskablePPO"
 
 NUM_TIMESTEPS = int(1e9)
-WIN_RATE_WINDOW = 1000
-WIN_RATE_THRESHOLD = 0.55
+WIN_RATE_WINDOW = 400
+WIN_RATE_THRESHOLD = 0.65
+NUM_OPPONENTS = 7
+ROUNDS = 10
 
 
 class Opponent:
     """Always player2"""
 
-    def __init__(self):
-        self.model: MaskablePPO | None = None
-        self.model_generation = 0
-        self.model_weights = {0: 0.5}
+    def __init__(self, model: MaskablePPO | None = None):
+        self.model = model
 
     def move(self, game: HexGame) -> bool:
         """Make the opponents move"""
@@ -46,15 +47,8 @@ class Opponent:
         win = game.move(action, player2)
         return win
 
-    def update(self, lose_rate: float):
-        self.model_weights[self.model_generation] = lose_rate
-        model_file_list = sorted(os.listdir(DIR))
-        weights = [self.model_weights.get(i, 0.5) for i in range(len(model_file_list))]
-        choice = random.choices(range(len(model_file_list)), weights=weights, k=1)[0]
-        print(f"{choice=} {weights=}")
-        self.model_generation = choice
-        filename = osp.join(DIR, model_file_list[choice])
-        self.model = MaskablePPO.load(filename)
+    def set_model(self, model: MaskablePPO | None):
+        self.model = model
 
 
 class HexSelfPlayEnv(HexEnv):
@@ -62,7 +56,6 @@ class HexSelfPlayEnv(HexEnv):
         super().__init__(size, *args, **kwargs)
         self.wins = 0
         self.games = 0
-        self.generation = 0
         self.first = True
         self.opponent = opponent
 
@@ -80,66 +73,98 @@ class HexSelfPlayEnv(HexEnv):
         return obs, info
 
     def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
+        obs, reward, self.terminated, truncated, info = super().step(action)
 
-        if reward != 1:
+        if not self.terminated:
             owin = self.opponent.move(self.game)
             if owin:
-                terminated = True
+                self.terminated = True
                 reward = -1
 
-        if terminated:
+        if self.terminated:
             self.games += 1
             if reward == 1:
                 self.wins += 1
-            if self.games >= WIN_RATE_WINDOW:
-                win_rate = self.wins / self.games
-                if win_rate > WIN_RATE_THRESHOLD:
-                    self.generation += 1
+
+        return obs, reward, self.terminated, truncated, info
+
+    def set_opponent(self, opponent: Opponent):
+        self.opponent = opponent
+
+
+class HexEvalCallback(EventCallback):
+    def __init__(self, env: HexSelfPlayEnv, verbose: int = 0):
+        super().__init__(verbose=verbose)
+        self.env = env
+
+    def _on_step(self) -> bool:
+        env = self.env
+        if env.terminated and env.games >= WIN_RATE_WINDOW:
+            win_rate = env.wins / env.games
+            if win_rate > WIN_RATE_THRESHOLD:
+                if self.verbose:
                     print(
-                        f"win rate = {win_rate*100:.1f}% {self.generation} vs {self.opponent.model_generation}"
+                        f"Quit after {env.games} and {self.num_timesteps} steps, rate={win_rate}"
                     )
-                    save_file = os.path.join(DIR, f"history{self.generation:03d}")
-                    model.save(save_file)
-                    self.opponent.update(1 - win_rate)
+                return False
+        return True
 
-                    self.wins = 0
-                    self.games = 0
+    def _on_training_start(self) -> None:
+        self.env.games = 0
+        self.env.wins = 0
+        return super()._on_training_start()
 
-        return obs, reward, terminated, truncated, info
+
+def fname(i):
+    return f"{DIR}/model{i:03d}"
 
 
 if __name__ == "__main__":
-    set_random_seed(SEED)
     os.makedirs(DIR, exist_ok=True)
 
-    env = HexSelfPlayEnv(SIZE, Opponent(), render_mode="human")
+    envs = [
+        HexSelfPlayEnv(SIZE, Opponent(), render_mode="human")
+        for _ in range(NUM_OPPONENTS)
+    ]
 
-    obs, info = env.reset()
+    # create initial opponents
+    print("initialize opponents")
+    opponents = []
+    for i in range(NUM_OPPONENTS):
+        name = fname(i)
+        if osp.exists(name + ".zip"):
+            print("loading", name)
+            model = MaskablePPO.load(name)
+        else:
+            print("training", name)
+            model = MaskablePPO("MlpPolicy", envs[i], verbose=0)
+            callback = HexEvalCallback(envs[i])
+            model.learn(total_timesteps=NUM_TIMESTEPS, callback=callback)
+            model.save(name)
+            model = MaskablePPO.load(name)
+        opponents.append(Opponent(model))
 
-    savedModels = sorted(glob(f"{DIR}/*"))
-    env.generation = len(savedModels)
-    if env.generation:
-        latest = savedModels[-1]
-        model = MaskablePPO.load(latest, env=env)
-    else:
+    print("training")
+    for round in range(ROUNDS):
+        # train a new model until it bests all the opponents
+        env = envs[round % NUM_OPPONENTS]
         model = MaskablePPO("MlpPolicy", env, verbose=0)
-
-    model.learn(total_timesteps=NUM_TIMESTEPS)
-
-    model.save(osp.join(DIR, "final_model"))
-
-    rewards = []
-    reward = 0
-    for i in range(10):
-        done = False
-        env.verbose = True
-        obs, info = env.reset()
-        while not done:
-            action_masks = get_action_masks(env)
-            action, _ = model.predict(
-                cast(np.ndarray, obs), action_masks=action_masks, deterministic=True
+        for i in range(NUM_OPPONENTS):
+            env.set_opponent(opponents[i])
+            callback = HexEvalCallback(env, verbose=1)
+            env.reset()
+            model.learn(total_timesteps=NUM_TIMESTEPS, callback=callback)
+            print(
+                round,
+                i,
+                callback.num_timesteps / env.games,
+                env.games,
+                callback.num_timesteps,
             )
-            obs, reward, done, _, info = env.step(action)
-        rewards.append(int(reward))
-    print(rewards)
+
+        # replace a random opponent
+        replace = round % NUM_OPPONENTS
+        print("replacing", replace)
+        name = fname(replace)
+        model.save(name)
+        opponents[replace] = Opponent(MaskablePPO.load(name))
