@@ -1,6 +1,7 @@
 from hexgame import HexGame, player1
 import gymnasium as gym
 from gymnasium import spaces
+from canonicalize import Canonicalizer
 
 
 class HexEnv(gym.Env):
@@ -13,44 +14,39 @@ class HexEnv(gym.Env):
         self.action_space = spaces.Discrete(size * size)
         self.observation_space = spaces.Box(low=-1, high=1, shape=(size * size,))
         self.size = size
-        self.opponent = None
         self.game = HexGame(size)
         self.render_mode = render_mode
-        self.info = {
-            "wins": {-1: 0, 1: 0, "first": 0, "second": 0},
-            "winner": 0,
-            "board": "",
-            "order": "first",
-        }
         self.verbose = False
+        self.info = {}
+        self.canon = Canonicalizer(size)
 
-    def _get_obs(self):
+    def get_obs_info(self, player=player1):
         """Convert to observation format"""
-        return self.game.board
-
-    def _get_info(self):
-        """Get auxilary info for debugging"""
-        return self.info
+        obs, inverse, sign = self.canon.canocalize(self.game.board, player)
+        self.info.update(
+            dict(inverse=inverse, sign=sign, action_masks=obs == 0, obs=obs)
+        )
+        return obs, self.info
 
     def reset(self, *, seed: int | None = None, **kwargs):
-        super().reset(seed=seed, **kwargs)
+        super().reset(seed=seed, *kwargs)
         self.game = HexGame(self.size)
 
-        observation = self._get_obs()
-        info = self._get_info()
-
+        observation, info = self.get_obs_info()
         return observation, info
 
     def step(self, action):
         """Execute one timestep"""
 
-        action = int(action)
-        win = self.game.move(action, player1)
+        naction = self.info["inverse"][int(action)]
+        try:
+            win = self.game.move(naction, player1)
+        except AssertionError:
+            print(f"{action=} {naction=}", self.info)
+            raise
 
         reward = 1.0 if win else 0.0
-        obs = self._get_obs()
-        self.info["board"] = str(self.game)
-        info = self._get_info()
+        obs, info = self.get_obs_info()
         truncated = False
         terminated = win
 
@@ -63,7 +59,7 @@ class HexEnv(gym.Env):
 
     def action_masks(self):
         """Mask off illegal moves"""
-        return self.game.board == 0
+        return self.info["action_masks"]
 
     def log(self, *args, **kwargs):
         if self.verbose:

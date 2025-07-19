@@ -117,7 +117,9 @@ class HexGame:
     def move(self, index: int, player: int) -> bool:
         board = self.board
         # Ensure the move is to an empty cell
-        assert 0 <= index < len(board) and abs(board[index]) == 0
+        if not (0 <= index < len(board) and abs(board[index]) == 0):
+            print(f"{index=} {board=}")
+            raise AssertionError
         board[index] = player
         connections = self.index_to_connections[index]
         for step in connections.neighbors:

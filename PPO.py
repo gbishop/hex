@@ -1,170 +1,128 @@
-from hexenv import HexEnv
-from hexgame import HexGame, player2
-from sb3_contrib import MaskablePPO
-from sb3_contrib.common.maskable.utils import get_action_masks
+from gymnasium import Env
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.utils import set_random_seed
-from stable_baselines3.common.callbacks import EventCallback
+from hexenv import HexEnv
+from hexgame import player1, player2
+from sb3_contrib import MaskablePPO
 import numpy as np
-from typing import cast
+import numpy.typing as npt
 import os
-import os.path as osp
-import random
-from glob import glob
+from typing import Callable, Any
 
 SEED = 42
+set_random_seed(SEED)
 SIZE = 5
 
 DIR = "MaskablePPO"
 
-NUM_TIMESTEPS = int(1e9)
-WIN_RATE_WINDOW = 400
-WIN_RATE_THRESHOLD = 0.65
-NUM_OPPONENTS = 7
+TRAIN_GAMES = 100
+EVALUATE_GAMES = 100
+ENVIRONMENTS = 6
+TIMESTEPS = 10 * ENVIRONMENTS * TRAIN_GAMES
+OPPONENTS = 7
 ROUNDS = 10
 
 
-class Opponent:
-    """Always player2"""
-
-    def __init__(self, model: MaskablePPO | None = None):
-        self.model = model
-
-    def move(self, game: HexGame) -> bool:
-        """Make the opponents move"""
-        if self.model:
-            # transpose the board
-            obs = -game.board.reshape((game.size, game.size)).transpose().flatten()
-            action, _ = self.model.predict(
-                obs, action_masks=obs == 0, deterministic=False
-            )
-            action = int(action)
-            # transpose the action back
-            r, c = game.rc(action)
-            action = game.index(c, r)
-        else:
-            action = random.choice(game.legal_moves())
-
-        win = game.move(action, player2)
-        return win
-
-    def set_model(self, model: MaskablePPO | None):
-        self.model = model
-
-
 class HexSelfPlayEnv(HexEnv):
-    def __init__(self, size: int, opponent: Opponent, *args, **kwargs):
-        super().__init__(size, *args, **kwargs)
-        self.wins = 0
-        self.games = 0
+    def __init__(
+        self,
+        size: int = 0,
+        opponent: MaskablePPO | None = None,
+        random_moves=0,
+        **kwargs,
+    ):
+        super().__init__(size, **kwargs)
         self.first = True
         self.opponent = opponent
+        self.random_moves = random_moves
+
+    def opponent_move(self, obs: npt.NDArray[np.float32], info: dict[str, Any]):
+        if self.opponent:
+            action, _ = self.opponent.predict(
+                obs, action_masks=obs == 0, deterministic=False
+            )
+            action = self.info["inverse"][action]
+        else:
+            action = self.np_random.choice(self.game.legal_moves())
+
+        win = self.game.move(action, player2)
+        obs, info = self.get_obs_info()
+        return win, obs, info
 
     def reset(self, *, seed: int | None = None, **kwargs):
         obs, info = super().reset(seed=seed, **kwargs)
 
+        for _ in range(self.random_moves):
+            move = self.np_random.choice(self.game.legal_moves())
+            if self.first:
+                self.game.move(move, player1)
+            else:
+                self.game.move(move, player2)
+            self.first = not self.first
+            obs, info = self.get_obs_info()
+
         if not self.first:
             # let the opponent go first
-            self.opponent.move(self.game)
-            obs = self._get_obs()
-            info = self._get_info()
+            _, obs, info = self.opponent_move(obs, info)
 
         self.first = not self.first
 
         return obs, info
 
-    def step(self, action):
-        obs, reward, self.terminated, truncated, info = super().step(action)
+    def step(self, action: int):
+        obs, reward, terminated, truncated, info = super().step(action)
 
-        if not self.terminated:
-            owin = self.opponent.move(self.game)
-            if owin:
-                self.terminated = True
+        if not terminated:
+            win, obs, info = self.opponent_move(obs, info)
+            if win:
+                terminated = True
                 reward = -1
 
-        if self.terminated:
-            self.games += 1
-            if reward == 1:
-                self.wins += 1
-
-        return obs, reward, self.terminated, truncated, info
-
-    def set_opponent(self, opponent: Opponent):
-        self.opponent = opponent
+        return obs, reward, terminated, truncated, info
 
 
-class HexEvalCallback(EventCallback):
-    def __init__(self, env: HexSelfPlayEnv, verbose: int = 0):
-        super().__init__(verbose=verbose)
-        self.env = env
-
-    def _on_step(self) -> bool:
-        env = self.env
-        if env.terminated and env.games >= WIN_RATE_WINDOW:
-            win_rate = env.wins / env.games
-            if win_rate > WIN_RATE_THRESHOLD:
-                if self.verbose:
-                    print(
-                        f"Quit after {env.games} and {self.num_timesteps} steps, rate={win_rate}"
-                    )
-                return False
-        return True
-
-    def _on_training_start(self) -> None:
-        self.env.games = 0
-        self.env.wins = 0
-        return super()._on_training_start()
-
-
-def fname(i):
+def fname(i: int):
     return f"{DIR}/model{i:03d}"
 
 
+def make_hex_env(seed: int | None = None, **kwargs):
+    def thunk():
+        env = HexSelfPlayEnv(**kwargs)
+        env.reset(seed=seed)
+        return env
+
+    return thunk
+
+
 if __name__ == "__main__":
+    print("start")
     os.makedirs(DIR, exist_ok=True)
 
-    envs = [
-        HexSelfPlayEnv(SIZE, Opponent(), render_mode="human")
-        for _ in range(NUM_OPPONENTS)
+    env_fns: list[Callable[[], Env[np.ndarray, int]]] = [
+        make_hex_env(size=SIZE, render_mode="human", random_moves=i, seed=SEED + i)
+        for i in range(ENVIRONMENTS)
     ]
 
-    # create initial opponents
-    print("initialize opponents")
-    opponents = []
-    for i in range(NUM_OPPONENTS):
-        name = fname(i)
-        if osp.exists(name + ".zip"):
-            print("loading", name)
-            model = MaskablePPO.load(name)
-        else:
-            print("training", name)
-            model = MaskablePPO("MlpPolicy", envs[i], verbose=0)
-            callback = HexEvalCallback(envs[i])
-            model.learn(total_timesteps=NUM_TIMESTEPS, callback=callback)
-            model.save(name)
-            model = MaskablePPO.load(name)
-        opponents.append(Opponent(model))
+    env = DummyVecEnv(env_fns)
 
-    print("training")
-    for round in range(ROUNDS):
-        # train a new model until it bests all the opponents
-        env = envs[round % NUM_OPPONENTS]
-        model = MaskablePPO("MlpPolicy", env, verbose=0)
-        for i in range(NUM_OPPONENTS):
-            env.set_opponent(opponents[i])
-            callback = HexEvalCallback(env, verbose=1)
-            env.reset()
-            model.learn(total_timesteps=NUM_TIMESTEPS, callback=callback)
-            print(
-                round,
-                i,
-                callback.num_timesteps / env.games,
-                env.games,
-                callback.num_timesteps,
-            )
+    model = MaskablePPO("MlpPolicy", env, verbose=1)
+    print("learning")
+    model.learn(TIMESTEPS)
 
-        # replace a random opponent
-        replace = round % NUM_OPPONENTS
-        print("replacing", replace)
-        name = fname(replace)
-        model.save(name)
-        opponents[replace] = Opponent(MaskablePPO.load(name))
+    print("evaluating")
+    env.seed(SEED)
+    obs = env.reset()
+    total_wins = np.zeros(ENVIRONMENTS)
+    total_games = np.zeros(ENVIRONMENTS)
+    for g in range(EVALUATE_GAMES * ENVIRONMENTS * 10):
+        assert isinstance(obs, np.ndarray)
+        action, _ = model.predict(obs, action_masks=obs == 0)
+        obs, rewards, dones, info = env.step(action)
+        total_wins += rewards == 1
+        total_games += dones
+        if np.all(total_games >= TRAIN_GAMES):
+            break
+
+    print(f"games = {total_games}")
+    rate = 100 * total_wins / total_games
+    print(np.array2string(rate, precision=2))
