@@ -1,7 +1,6 @@
 from hexgame import HexGame, player1
 import gymnasium as gym
 from gymnasium import spaces
-from canonicalize import Canonicalizer
 
 
 class HexEnv(gym.Env):
@@ -9,9 +8,7 @@ class HexEnv(gym.Env):
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(
-        self, size: int, render_mode=None, canon_identity=False, canon_byvalue=True
-    ):
+    def __init__(self, size: int, render_mode=None):
         super().__init__()
         self.action_space = spaces.Discrete(size * size)
         self.observation_space = spaces.Box(low=-1, high=1, shape=(size * size,))
@@ -20,13 +17,10 @@ class HexEnv(gym.Env):
         self.render_mode = render_mode
         self.verbose = False
         self.info = {}
-        self.canon = Canonicalizer(size, byvalue=canon_byvalue, identity=canon_identity)
 
-    def get_obs_info(self, player=player1):
+    def get_obs_info(self):
         """Convert to observation format"""
-        obs, map, sign = self.canon.canocalize(self.game.board, player)
-        self.info.update(dict(map=map, sign=sign, action_masks=obs == 0, obs=obs))
-        return obs, self.info
+        return self.game.board, self.info
 
     def reset(self, *, seed: int | None = None, **kwargs):
         super().reset(seed=seed, *kwargs)
@@ -38,12 +32,8 @@ class HexEnv(gym.Env):
     def step(self, action):
         """Execute one timestep"""
 
-        naction = self.info["map"][int(action)]
-        try:
-            win = self.game.move(naction, player1)
-        except AssertionError:
-            print(f"{action=} {naction=}", self.info)
-            raise
+        action = int(action)
+        win = self.game.move(action, player1)
 
         reward = 1.0 if win else 0.0
         obs, info = self.get_obs_info()
@@ -59,7 +49,7 @@ class HexEnv(gym.Env):
 
     def action_masks(self):
         """Mask off illegal moves"""
-        return self.info["action_masks"]
+        return self.game.board == 0
 
     def log(self, *args, **kwargs):
         if self.verbose:

@@ -5,6 +5,34 @@ import numpy as np
 import numpy.typing as npt
 from typing import Any
 
+transpose = [
+    0,
+    5,
+    10,
+    15,
+    20,
+    1,
+    6,
+    11,
+    16,
+    21,
+    2,
+    7,
+    12,
+    17,
+    22,
+    3,
+    8,
+    13,
+    18,
+    23,
+    4,
+    9,
+    14,
+    19,
+    24,
+]
+
 
 class HexSelfPlayEnv(HexEnv):
     def __init__(
@@ -21,10 +49,11 @@ class HexSelfPlayEnv(HexEnv):
 
     def opponent_move(self, obs: npt.NDArray[np.float32], info: dict[str, Any]):
         if self.opponent:
+            obs = -obs[transpose]
             action, _ = self.opponent.predict(
                 obs, action_masks=obs == 0, deterministic=False
             )
-            action = self.info["map"][action]
+            action = transpose[action]
         else:
             action = self.np_random.choice(self.game.legal_moves())
 

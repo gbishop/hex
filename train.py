@@ -19,8 +19,6 @@ parser.add_argument("--environments", type=int, default=6)
 parser.add_argument("--opponents", type=int, default=7)
 parser.add_argument("--rounds", type=int, default=10)
 parser.add_argument("--dir", default="MaskablePPO")
-parser.add_argument("-canon_identity", action="store_true")
-parser.add_argument("-canon_byvalue", action="store_false")
 parser.add_argument("--verbose", action="store_true")
 
 args = parser.parse_args()
@@ -55,8 +53,6 @@ if __name__ == "__main__":
             render_mode="human",
             random_moves=i,
             seed=args.seed + i,
-            canon_identity=args.canon_identity,
-            canon_byvalue=args.canon_byvalue,
         )
         for i in range(args.environments)
     ]
