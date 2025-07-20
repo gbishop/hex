@@ -9,7 +9,9 @@ class HexEnv(gym.Env):
 
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, size: int, render_mode=None):
+    def __init__(
+        self, size: int, render_mode=None, canon_identity=False, canon_byvalue=True
+    ):
         super().__init__()
         self.action_space = spaces.Discrete(size * size)
         self.observation_space = spaces.Box(low=-1, high=1, shape=(size * size,))
@@ -18,14 +20,12 @@ class HexEnv(gym.Env):
         self.render_mode = render_mode
         self.verbose = False
         self.info = {}
-        self.canon = Canonicalizer(size)
+        self.canon = Canonicalizer(size, byvalue=canon_byvalue, identity=canon_identity)
 
     def get_obs_info(self, player=player1):
         """Convert to observation format"""
-        obs, inverse, sign = self.canon.canocalize(self.game.board, player)
-        self.info.update(
-            dict(inverse=inverse, sign=sign, action_masks=obs == 0, obs=obs)
-        )
+        obs, map, sign = self.canon.canocalize(self.game.board, player)
+        self.info.update(dict(map=map, sign=sign, action_masks=obs == 0, obs=obs))
         return obs, self.info
 
     def reset(self, *, seed: int | None = None, **kwargs):
@@ -38,7 +38,7 @@ class HexEnv(gym.Env):
     def step(self, action):
         """Execute one timestep"""
 
-        naction = self.info["inverse"][int(action)]
+        naction = self.info["map"][int(action)]
         try:
             win = self.game.move(naction, player1)
         except AssertionError:

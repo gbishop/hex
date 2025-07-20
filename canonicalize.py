@@ -12,6 +12,7 @@ class Canonicalizer:
 
         # identity transform
         I: npt.NDArray[np.int64] = np.arange(size * size)
+        self.I = I
 
         def square(A: npt.NDArray[np.int64]):
             return A.reshape((size, size))
@@ -54,33 +55,93 @@ class Canonicalizer:
             dtype=np.float32,
         )
 
-    def canocalize(self, obs: npt.NDArray[np.float32], player: int):
+    def canocalize(
+        self, obs: npt.NDArray[np.float32], player: int, ci: int | None = None
+    ):
+        canon = obs
+        tobs = obs
+        map = self.I
+        sign = 1
+
         # convert the observation to the players view
         if player == -1:
-            obs = -obs[self.t]
+            tobs = -obs
+            sign = -1
+
         # get all transforms of this observation
         if not self.byvalue:
-            obs = obs != 0
-        canons = obs[self.transforms]
-        # sort it to choose the canonical transform
+            # choose canon on occupied status
+            tobs = tobs != 0
+        canons = tobs[self.transforms]
         if self.identity:
             ci = 0
-        else:
+        elif ci is None:
+            # sort it to choose the canonical transform
             ci = np.lexsort(canons.transpose())[0]
-        # get the map
-        inverse = self.transforms[ci]
-        # get the sign
-        sign = self.signs[ci]
-        # get the transformed observation
-        canon = obs[inverse] * sign
-        if player == -1:
-            inverse = inverse[self.t]
-            sign = -sign
 
-        return canon, inverse, sign
+        assert ci is not None
+
+        if player == -1:
+            # swap sides for player 2 by jumping to the transposed transforms
+            ci = (ci + 4) % len(canons)
+        # get the map
+        map = self.transforms[ci]
+        # get the sign
+        sign = sign * self.signs[ci]
+        # get the transformed observation
+        canon = obs[map] * sign
+
+        return canon, map, sign
+
+
+def visualize():
+    test = np.array(
+        [
+            [0, 0, 0, 0, -1],
+            [0, 0, 0, -1, 0],
+            [1, 1, 1, 0, 0],
+            [0, 0, 0, -1, 0],
+            [0, 0, 0, 0, 0],
+        ],
+        dtype=np.float32,
+    )
+    SIZE = len(test)
+    test = test.flatten()
+
+    def draw(*boards):
+        chars = {1: "X", -1: "O", 0: "_"}
+        N = len(boards)
+        S = SIZE
+        w = 3 * S
+        W = N * w
+        lines = []
+        for r in range(S):
+            line = [" " for _ in range(W)]
+            for i, board in enumerate(boards):
+                for c in range(S):
+                    line[i * w + c * 2 + r] = chars[board[r * S + c]]
+            lines.append("".join(line))
+        return "\n".join(lines)
+
+    C = Canonicalizer(SIZE, byvalue=True, identity=True)
+    for ci in range(8):
+        for p in [1, -1]:
+            b = test.copy()
+            c, inverse, _ = C.canocalize(b, p, ci=ci)
+            i = np.where(c == 0)[0][0]
+            d = b.copy()
+            print(f"{ci=} {p=} {i=} {inverse[i]=}")
+            ok = d[inverse[i]] == 0
+            d[inverse[i]] = p
+            print(draw(b, c, d))
+            assert ok
 
 
 if __name__ == "__main__":
+    visualize()
+
+
+def efficiency():
     import random
 
     SIZE = 5
@@ -109,7 +170,7 @@ if __name__ == "__main__":
                     p = -p
 
             count(obs, In)
-            canon, inverse, sign = N.canocalize(obs, ip)
+            canon, _, _ = N.canocalize(obs, ip)
             count(canon, Out)
 
     scale = COMBINATIONS / samples
