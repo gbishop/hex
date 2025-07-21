@@ -25,7 +25,7 @@ options:
   --verbose
 ```
 
-I got an good player in about 24 minutes on my Chromebook with the command line:
+I got a good player in about 24 minutes on my Chromebook with the command line:
 
 ```
 python train.py --size=5 --train_games 1000 --rounds=20
