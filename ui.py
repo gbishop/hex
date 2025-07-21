@@ -3,15 +3,16 @@ from textual.containers import Grid, Container, Vertical, Horizontal
 from textual.widgets import Button, Static
 from sb3_contrib import MaskablePPO
 from glob import glob
-from PPO import SIZE, DIR, HexEnv
 import numpy as np
 from typing import cast
-
-fname = sorted(glob(f"{DIR}/*"))[-1]
-env = HexEnv(SIZE)
-model = MaskablePPO.load(fname, env)
+from hexenv import HexEnv
 
 N = 5  # dimension of the Hex Grid
+DIR = "MaskablePPO"
+
+fname = sorted(glob(f"{DIR}/*"))[-1]
+env = HexEnv(N)
+model = MaskablePPO.load(fname, env)
 
 
 class HexApp(App):

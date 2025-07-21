@@ -1,12 +1,14 @@
 from stable_baselines3.common.utils import set_random_seed
 from PPO import HexSelfPlayEnv
 import os
-from typing import Callable
+from typing import Callable, cast
 from gymnasium import Env
 import numpy as np
 from stable_baselines3.common.vec_env import DummyVecEnv
 from sb3_contrib import MaskablePPO
 import argparse
+import re
+from glob import glob
 
 parser = argparse.ArgumentParser(
     description="Train PPO on Hex",
@@ -16,8 +18,7 @@ parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--train_games", type=int, default=100)
 parser.add_argument("--evaluate_games", type=int, default=100)
 parser.add_argument("--environments", type=int, default=6)
-parser.add_argument("--opponents", type=int, default=7)
-parser.add_argument("--rounds", type=int, default=10)
+parser.add_argument("--rounds", type=int, default=1)
 parser.add_argument("--dir", default="MaskablePPO")
 parser.add_argument("--verbose", action="store_true")
 
@@ -30,8 +31,32 @@ set_random_seed(args.seed)
 TIMESTEPS = 10 * args.environments * args.train_games
 
 
-def fname(i: int):
-    return f"{args.dir}/model{i:03d}"
+class Files:
+    def __init__(self, dir, base="model"):
+        self.dir = dir
+        self.base = base
+        self.generation = 0
+        os.makedirs(self.dir, exist_ok=True)
+
+    def latest(self):
+        files = sorted(glob(f"{self.dir}/*"))
+        self.generation = 0
+        last = ""
+        if files:
+            last = files[-1]
+            nums = re.findall(r"\d+", last)
+            print(f"{nums=}")
+            if nums:
+                self.generation = int(nums[0])
+                print(f"{self.generation=}")
+
+        return last, self.generation
+
+    def save(self, model):
+        self.generation += 1
+        name = f"{self.dir}/{self.base}{self.generation:03d}"
+        model.save(name)
+        return name
 
 
 def make_hex_env(seed: int | None = None, **kwargs):
@@ -45,7 +70,10 @@ def make_hex_env(seed: int | None = None, **kwargs):
 
 if __name__ == "__main__":
     print("start")
-    os.makedirs(args.dir, exist_ok=True)
+    fm = Files(args.dir)
+
+    latest, generation = fm.latest()
+    print(f"{latest=} {generation=}")
 
     env_fns: list[Callable[[], Env[np.ndarray, int]]] = [
         make_hex_env(
@@ -59,24 +87,35 @@ if __name__ == "__main__":
 
     env = DummyVecEnv(env_fns)
 
-    model = MaskablePPO("MlpPolicy", env, verbose=args.verbose)
-    print("learning")
-    model.learn(TIMESTEPS)
+    if latest:
+        model = MaskablePPO.load(latest, env, verbose=args.verbose)
+    else:
+        model = MaskablePPO("MlpPolicy", env, verbose=args.verbose)
 
-    print("evaluating")
-    env.seed(args.seed)
-    obs = env.reset()
-    total_wins = np.zeros(args.environments)
-    total_games = np.zeros(args.environments)
-    for g in range(args.evaluate_games * args.environments * 10):
-        assert isinstance(obs, np.ndarray)
-        action, _ = model.predict(obs, action_masks=obs == 0)
-        obs, rewards, dones, info = env.step(action)
-        total_wins += rewards == 1
-        total_games += dones
-        if np.all(total_games >= args.evaluate_games):
-            break
+    for round in range(args.rounds):
+        if latest:
+            opponent = MaskablePPO.load(latest, verbose=args.verbose)
+            for i in range(len(env.envs)):
+                cast(HexSelfPlayEnv, env.envs[i]).opponent = opponent
 
-    print(f"games = {total_games}")
-    rate = 100 * total_wins / total_games
-    print(np.array2string(rate, precision=2))
+        print(f"learning {round=}")
+        model.learn(TIMESTEPS)
+        latest = fm.save(model)
+
+        print("evaluating")
+        env.seed(args.seed)
+        obs = env.reset()
+        total_wins = np.zeros(args.environments)
+        total_games = np.zeros(args.environments)
+        for g in range(args.evaluate_games * args.environments * 10):
+            assert isinstance(obs, np.ndarray)
+            action, _ = model.predict(obs, action_masks=obs == 0)
+            obs, rewards, dones, info = env.step(action)
+            total_wins += rewards == 1
+            total_games += dones
+            if np.all(total_games >= args.evaluate_games):
+                break
+
+        print(f"games = {total_games}")
+        rate = 100 * total_wins / total_games
+        print(np.array2string(rate, precision=2))
