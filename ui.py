@@ -63,7 +63,7 @@ class HexApp(App):
         action, _ = model.predict(
             cast(np.ndarray, obs), action_masks=action_masks, deterministic=True
         )
-        obs, reward, done, _, info = env.step(action)
+        obs, reward, _, _, _ = env.step(action)
         button = cast(Button, self.query_one(f"#i-{action}"))
         button.add_class("X")
         button.label = "X"
