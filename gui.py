@@ -7,13 +7,7 @@ from glob import glob
 import numpy as np
 from typing import cast
 from hexenv import HexEnv
-
-N = 5  # dimension of the Hex Grid
-DIR = "MaskablePPO"
-
-fname = sorted(glob(f"{DIR}/*"))[-1]
-env = HexEnv(N)
-model = MaskablePPO.load(fname, env)
+from argparse import ArgumentParser
 
 
 class HexCanvas(tk.Canvas):
@@ -29,7 +23,7 @@ class HexCanvas(tk.Canvas):
         self._draw_grid()
         self.bind("<Button-1>", self.on_click)
         self.font = font.Font(family="Arial", size=20, weight="bold")
-        X = self.hex_width * (self.cols + 1)
+        X = self.hex_width * (self.cols + 0.5)
         Y = border
         self.message, w, h = self.create_message(X, Y, "Your move")
         Y += h
@@ -40,7 +34,7 @@ class HexCanvas(tk.Canvas):
     def create_button(self, x, y, text):
         padding = 5
         margin = 5
-        width = self.font.measure(text) + 2 * padding
+        width = max(self.font.measure(text) + 2 * padding, 100)
         height = self.font.metrics()["linespace"] + 2 * padding
         self.create_rectangle(x, y, x + width, y + height, fill="#eee", width=2)
         id = self.create_text(x + width / 2, y + height / 2, text=text, font=self.font)
@@ -170,7 +164,6 @@ class HexCanvas(tk.Canvas):
 
     def on_click(self, event):
         clicked = self.find_closest(event.x, event.y)[0]
-        print(f"{clicked=}")
         if clicked in self.cells:
             self.itemconfig(clicked, fill="#0000ff")
             index = self.cells.index(clicked)
@@ -204,10 +197,20 @@ class HexCanvas(tk.Canvas):
 
 
 if __name__ == "__main__":
+    parser = ArgumentParser(description="Play Hex")
+    parser.add_argument("-s", "--size", type=int, default=5)
+    args = parser.parse_args()
+
+    DIR = f"models-{args.size}"
+
+    fname = sorted(glob(f"{DIR}/*"))[-1]
+    env = HexEnv(args.size)
+    model = MaskablePPO.load(fname, env)
+
     root = tk.Tk()
     root.title("Hex")
 
-    SIZE = 5
+    SIZE = args.size
     HEIGHT = 800
     BORDER = 20
     HEX_SIZE = (HEIGHT - 2 * BORDER) / (SIZE * 1.5 + 0.5)
