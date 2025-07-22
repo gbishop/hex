@@ -1,11 +1,12 @@
 from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3.common.callbacks import StopTrainingOnMaxEpisodes
+from stable_baselines3.common.vec_env import DummyVecEnv
+from sb3_contrib import MaskablePPO
+from gymnasium import Env
 from PPO import HexSelfPlayEnv
 import os
 from typing import Callable, cast
-from gymnasium import Env
 import numpy as np
-from stable_baselines3.common.vec_env import DummyVecEnv
-from sb3_contrib import MaskablePPO
 import argparse
 import re
 from glob import glob
@@ -15,11 +16,11 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("--size", type=int, default=5)
 parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--train_games", type=int, default=100)
+parser.add_argument("--train_games", type=int, default=600)
 parser.add_argument("--evaluate_games", type=int, default=100)
 parser.add_argument("--environments", type=int, default=6)
-parser.add_argument("--rounds", type=int, default=1)
-parser.add_argument("--dir", default="MaskablePPO")
+parser.add_argument("--rounds", type=int, default=10)
+parser.add_argument("--dir", default="models")
 parser.add_argument("--verbose", action="store_true")
 
 args = parser.parse_args()
@@ -27,8 +28,6 @@ args = parser.parse_args()
 print(args)
 
 set_random_seed(args.seed)
-
-TIMESTEPS = 10 * args.environments * args.train_games
 
 
 class Files:
@@ -44,7 +43,7 @@ class Files:
         last = ""
         if files:
             last = files[-1]
-            nums = re.findall(r"\d+", last)
+            nums = re.findall(r"\d\d\d", last)
             print(f"{nums=}")
             if nums:
                 self.generation = int(nums[0])
@@ -70,7 +69,7 @@ def make_hex_env(seed: int | None = None, **kwargs):
 
 if __name__ == "__main__":
     print("start")
-    fm = Files(args.dir)
+    fm = Files(f"{args.dir}-{args.size}")
 
     latest, generation = fm.latest()
     print(f"{latest=} {generation=}")
@@ -99,7 +98,18 @@ if __name__ == "__main__":
                 cast(HexSelfPlayEnv, env.envs[i]).opponent = opponent
 
         print(f"learning {round=}")
-        model.learn(TIMESTEPS)
+
+        max_episodes = args.train_games // args.environments
+        callback_max_episodes = StopTrainingOnMaxEpisodes(
+            max_episodes=max_episodes, verbose=args.verbose
+        )
+
+        ts0 = model.num_timesteps
+        model.learn(
+            1_000_000_000, callback=callback_max_episodes, reset_num_timesteps=False
+        )
+        ts1 = model.num_timesteps
+        print(f"timesteps/game = {(ts1 - ts0) / args.train_games}")
         latest = fm.save(model)
 
         print("evaluating")
@@ -113,9 +123,13 @@ if __name__ == "__main__":
             obs, rewards, dones, info = env.step(action)
             total_wins += rewards == 1
             total_games += dones
-            if np.all(total_games >= args.evaluate_games):
+            if np.sum(total_games) >= args.evaluate_games:
                 break
 
         print(f"games = {total_games}")
         rate = 100 * total_wins / total_games
-        print(np.array2string(rate, precision=2))
+        mean_rate = f"{100 * np.sum(total_wins) / np.sum(total_games):.1f}"
+        print(
+            mean_rate,
+            np.array2string(rate, precision=2),
+        )
