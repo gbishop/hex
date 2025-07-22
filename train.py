@@ -3,7 +3,7 @@ from stable_baselines3.common.callbacks import StopTrainingOnMaxEpisodes
 from stable_baselines3.common.vec_env import DummyVecEnv
 from sb3_contrib import MaskablePPO
 from gymnasium import Env
-from PPO import HexSelfPlayEnv
+from hexenv import HexSelfPlayEnv
 import os
 from typing import Callable, cast
 import numpy as np
