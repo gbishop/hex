@@ -1,6 +1,7 @@
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.callbacks import StopTrainingOnMaxEpisodes
 from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.monitor import Monitor
 from sb3_contrib import MaskablePPO
 from gymnasium import Env
 from hexenv import HexSelfPlayEnv
@@ -15,7 +16,7 @@ parser = argparse.ArgumentParser(
     description="Train PPO on Hex",
 )
 parser.add_argument("--size", type=int, default=5)
-parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--seed", type=int)
 parser.add_argument("--train_games", type=int, default=600)
 parser.add_argument("--evaluate_games", type=int, default=100)
 parser.add_argument("--environments", type=int, default=6)
@@ -27,7 +28,8 @@ args = parser.parse_args()
 
 print(args)
 
-set_random_seed(args.seed)
+if args.seed is not None:
+    set_random_seed(args.seed)
 
 
 class Files:
@@ -60,7 +62,7 @@ class Files:
 
 def make_hex_env(seed: int | None = None, **kwargs):
     def thunk():
-        env = HexSelfPlayEnv(**kwargs)
+        env = Monitor(HexSelfPlayEnv(**kwargs))
         env.reset(seed=seed)
         return env
 
@@ -79,7 +81,7 @@ if __name__ == "__main__":
             size=args.size,
             render_mode="human",
             random_moves=i,
-            seed=args.seed + i,
+            seed=args.seed + i if args.seed is not None else None,
         )
         for i in range(args.environments)
     ]
