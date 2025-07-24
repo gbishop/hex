@@ -1,24 +1,22 @@
 from stable_baselines3.common.utils import set_random_seed
-from stable_baselines3.common.callbacks import StopTrainingOnMaxEpisodes
+from stable_baselines3.common.callbacks import BaseCallback, StopTrainingOnMaxEpisodes
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.monitor import Monitor
 from sb3_contrib import MaskablePPO
 from gymnasium import Env
-from hexenv import HexSelfPlayEnv
-import os
-from typing import Callable, cast
+from hexenv import HexSelfPlayEnv, Opponent
+from typing import Callable
 import numpy as np
 import argparse
-import re
-from glob import glob
+from filemanager import FileManager
 
 parser = argparse.ArgumentParser(
     description="Train PPO on Hex",
 )
 parser.add_argument("--size", type=int, default=5)
 parser.add_argument("--seed", type=int)
-parser.add_argument("--train_games", type=int, default=600)
-parser.add_argument("--evaluate_games", type=int, default=100)
+parser.add_argument("--train_games", type=int, default=1200)
+parser.add_argument("--evaluate_games", type=int, default=400)
+parser.add_argument("--threshold", type=float, default=0.55)
 parser.add_argument("--environments", type=int, default=6)
 parser.add_argument("--rounds", type=int, default=10)
 parser.add_argument("--dir", default="models")
@@ -32,37 +30,49 @@ if args.seed is not None:
     set_random_seed(args.seed)
 
 
-class Files:
-    def __init__(self, dir, base="model"):
-        self.dir = dir
-        self.base = base
-        self.generation = 0
-        os.makedirs(self.dir, exist_ok=True)
+class EpisodeEvalCallback(BaseCallback):
+    """
+    Call a function when the moving average of rewards exceeds a threshold
 
-    def latest(self):
-        files = sorted(glob(f"{self.dir}/*"))
-        self.generation = 0
-        last = ""
-        if files:
-            last = files[-1]
-            nums = re.findall(r"\d\d\d", last)
-            print(f"{nums=}")
-            if nums:
-                self.generation = int(nums[0])
-                print(f"{self.generation=}")
+    :param update: The function to call.
+    :param period: The window for the moving average.
+    :param threshold: The EMA threshold.
+    :param verbose: Verbosity level.
+    """
 
-        return last, self.generation
+    def __init__(
+        self, update: Callable, period: int, threshold: float, verbose: int = 0
+    ):
+        super().__init__(verbose=verbose)
+        self.update = update
+        self.period = period
+        self.threshold = threshold
+        self.n_episodes = 0
+        self.recent_rewards = np.zeros((period,))
 
-    def save(self, model):
-        self.generation += 1
-        name = f"{self.dir}/{self.base}{self.generation:03d}"
-        model.save(name)
-        return name
+    def _on_step(self) -> bool:
+        dones = self.locals["dones"]
+        rewards = self.locals["rewards"]
+
+        for reward in rewards[dones == 1]:
+            self.recent_rewards[self.n_episodes % self.period] = reward
+            self.n_episodes += 1
+
+        self.recent_rewards = self.recent_rewards[-self.period :]
+
+        if self.n_episodes > self.period:
+            self.mean = (np.mean(self.recent_rewards) + 1) * 0.5
+            if self.mean > self.threshold:
+                self.update(self.model, self.n_episodes, self.mean, self.verbose)
+                self.n_episodes = 0
+                self.ema = 0
+
+        return True
 
 
-def make_hex_env(seed: int | None = None, **kwargs):
+def make_hex_env(size: int, opponent: Opponent, seed: int | None = None, **kwargs):
     def thunk():
-        env = Monitor(HexSelfPlayEnv(**kwargs))
+        env = HexSelfPlayEnv(size, opponent, **kwargs)
         env.reset(seed=seed)
         return env
 
@@ -71,16 +81,20 @@ def make_hex_env(seed: int | None = None, **kwargs):
 
 if __name__ == "__main__":
     print("start")
-    fm = Files(f"{args.dir}-{args.size}")
+    fm = FileManager(f"{args.dir}-{args.size}")
 
     latest, generation = fm.latest()
     print(f"{latest=} {generation=}")
 
+    size = args.size
+    opponent = Opponent(size)
+
     env_fns: list[Callable[[], Env[np.ndarray, int]]] = [
         make_hex_env(
-            size=args.size,
+            size,
+            opponent,
             render_mode="human",
-            random_moves=i,
+            random_moves=i // 2,
             seed=args.seed + i if args.seed is not None else None,
         )
         for i in range(args.environments)
@@ -93,45 +107,28 @@ if __name__ == "__main__":
     else:
         model = MaskablePPO("MlpPolicy", env, verbose=args.verbose)
 
-    for round in range(args.rounds):
-        if latest:
-            opponent = MaskablePPO.load(latest, verbose=args.verbose)
-            for i in range(len(env.envs)):
-                cast(HexSelfPlayEnv, env.envs[i]).opponent = opponent
-
-        print(f"learning {round=}")
-
-        max_episodes = args.train_games // args.environments
-        callback_max_episodes = StopTrainingOnMaxEpisodes(
-            max_episodes=max_episodes, verbose=args.verbose
-        )
-
-        ts0 = model.num_timesteps
-        model.learn(
-            1_000_000_000, callback=callback_max_episodes, reset_num_timesteps=False
-        )
-        ts1 = model.num_timesteps
-        print(f"timesteps/game = {(ts1 - ts0) / args.train_games}")
+    def saveAndUpdateOpponent(model, episodes, mean, verbose=1):
         latest = fm.save(model)
+        if verbose:
+            print(f"save {latest=} {episodes=} {mean=}")
+        opponent.update_model(MaskablePPO.load(latest))
 
-        print("evaluating")
-        env.seed(args.seed)
-        obs = env.reset()
-        total_wins = np.zeros(args.environments)
-        total_games = np.zeros(args.environments)
-        for g in range(args.evaluate_games * args.environments * 10):
-            assert isinstance(obs, np.ndarray)
-            action, _ = model.predict(obs, action_masks=obs == 0)
-            obs, rewards, dones, info = env.step(action)
-            total_wins += rewards == 1
-            total_games += dones
-            if np.sum(total_games) >= args.evaluate_games:
-                break
+    callback_ema_rewards = EpisodeEvalCallback(
+        update=saveAndUpdateOpponent,
+        period=args.evaluate_games,
+        threshold=args.threshold,
+        verbose=1,
+    )
 
-        print(f"games = {total_games}")
-        rate = 100 * total_wins / total_games
-        mean_rate = f"{100 * np.sum(total_wins) / np.sum(total_games):.1f}"
-        print(
-            mean_rate,
-            np.array2string(rate, precision=2),
-        )
+    max_episodes = args.train_games // args.environments
+    callback_max_episodes = StopTrainingOnMaxEpisodes(
+        max_episodes=max_episodes,
+        verbose=1,
+    )
+
+    model.learn(
+        1_000_000_000,
+        callback=[callback_ema_rewards, callback_max_episodes],
+        reset_num_timesteps=False,
+    )
+    fm.save(model)

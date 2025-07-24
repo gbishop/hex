@@ -60,13 +60,38 @@ class HexEnv(gym.Env):
             print(*args, **kwargs)
 
 
+class Opponent:
+    def __init__(self, size, verbose=0):
+        self.size = size
+        self.verbose = verbose
+        self.transpose = (
+            np.arange(size * size).reshape((size, size)).transpose().flatten().tolist()
+        )
+        self.model: MaskablePPO | None = None
+
+    def move(self, obs: npt.NDArray[np.float32]):
+        if self.model:
+            obs = -obs[self.transpose]
+            action, _ = self.model.predict(
+                obs, action_masks=obs == 0, deterministic=False
+            )
+            action = self.transpose[action]
+        else:
+            action = np.random.choice(np.where(obs == 0)[0])
+
+        return action
+
+    def update_model(self, model: MaskablePPO):
+        self.model = model
+
+
 class HexSelfPlayEnv(HexEnv):
     """Add an opponent to the HexEnv"""
 
     def __init__(
         self,
-        size: int = 0,
-        opponent: MaskablePPO | None = None,
+        size: int,
+        opponent: Opponent,
         random_moves=0,
         **kwargs,
     ):
@@ -74,20 +99,9 @@ class HexSelfPlayEnv(HexEnv):
         self.first = True
         self.opponent = opponent
         self.random_moves = random_moves
-        self.transpose = (
-            np.arange(size * size).reshape((size, size)).transpose().flatten().tolist()
-        )
 
     def opponent_move(self, obs: npt.NDArray[np.float32], info: dict[str, Any]):
-        if self.opponent:
-            obs = -obs[self.transpose]
-            action, _ = self.opponent.predict(
-                obs, action_masks=obs == 0, deterministic=False
-            )
-            action = self.transpose[action]
-        else:
-            action = self.np_random.choice(self.game.legal_moves())
-
+        action = self.opponent.move(obs)
         win = self.game.move(action, player2)
         obs, info = self.get_obs_info()
         return win, obs, info

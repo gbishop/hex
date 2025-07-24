@@ -199,11 +199,12 @@ class HexCanvas(tk.Canvas):
 if __name__ == "__main__":
     parser = ArgumentParser(description="Play Hex")
     parser.add_argument("-s", "--size", type=int, default=5)
+    parser.add_argument("-d", "--dir", default="models")
     args = parser.parse_args()
 
-    DIR = f"models-{args.size}"
+    path = f"{args.dir}-{args.size}/*"
 
-    fname = sorted(glob(f"{DIR}/*"))[-1]
+    fname = sorted(glob(path))[-1]
     env = HexEnv(args.size)
     model = MaskablePPO.load(fname, env)
 
