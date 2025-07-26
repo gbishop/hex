@@ -11,7 +11,7 @@ class FileManager:
         os.makedirs(self.dir, exist_ok=True)
 
     def latest(self):
-        files = sorted(glob(f"{self.dir}/*"))
+        files = sorted(glob(f"{self.dir}/*.zip"))
         self.generation = 0
         last = ""
         if files:

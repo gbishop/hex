@@ -8,6 +8,7 @@ import numpy as np
 from typing import cast
 from hexenv import HexEnv
 from argparse import ArgumentParser
+from modelmanager import ModelManager
 
 
 class HexCanvas(tk.Canvas):
@@ -198,15 +199,17 @@ class HexCanvas(tk.Canvas):
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Play Hex")
-    parser.add_argument("-s", "--size", type=int, default=5)
-    parser.add_argument("-d", "--dir", default="models")
+    parser.add_argument(
+        "base",
+    )
+    parser.add_argument("size", type=int)
     args = parser.parse_args()
 
-    path = f"{args.dir}-{args.size}/*"
+    manager = ModelManager(args.base, args.size)
+    latest, latestpath = manager.latest()
 
-    fname = sorted(glob(path))[-1]
     env = HexEnv(args.size)
-    model = MaskablePPO.load(fname, env)
+    model = manager.load(latest)
 
     root = tk.Tk()
     root.title("Hex")

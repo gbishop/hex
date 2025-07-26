@@ -61,13 +61,13 @@ class HexEnv(gym.Env):
 
 
 class Opponent:
-    def __init__(self, size, verbose=0):
+    def __init__(self, size, model: MaskablePPO | None = None, verbose=0):
         self.size = size
         self.verbose = verbose
         self.transpose = (
             np.arange(size * size).reshape((size, size)).transpose().flatten().tolist()
         )
-        self.model: MaskablePPO | None = None
+        self.model = model
 
     def move(self, obs: npt.NDArray[np.float32]):
         if self.model:
@@ -136,3 +136,6 @@ class HexSelfPlayEnv(HexEnv):
                 reward = -1
 
         return obs, reward, terminated, truncated, info
+
+    def update_opponent_model(self, model: MaskablePPO):
+        self.opponent.update_model(model)

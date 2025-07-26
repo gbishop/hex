@@ -50,14 +50,14 @@ if __name__ == "__main__":
     else:
         opponent_name = model_name
 
-    opponent.update_model(MaskablePPO.load(opponent_name))
+    opponent.update_model(MaskablePPO.load(opponent_name, device="cpu"))
 
     env_fns: list[Callable[[], Env[np.ndarray, int]]] = [
         make_hex_env(
             size,
             opponent,
             render_mode="human",
-            random_moves=i,
+            random_moves=0,
             seed=args.seed + i if args.seed is not None else None,
         )
         for i in range(args.environments)
@@ -66,9 +66,9 @@ if __name__ == "__main__":
     env = DummyVecEnv(env_fns)
 
     if model_name:
-        model = MaskablePPO.load(model_name, env, verbose=args.verbose)
+        model = MaskablePPO.load(model_name, env, verbose=args.verbose, device="cpu")
     else:
-        model = MaskablePPO("MlpPolicy", env, verbose=args.verbose)
+        model = MaskablePPO("MlpPolicy", env, verbose=args.verbose, device="cpu")
 
     env.seed(args.seed)
     obs = env.reset()
