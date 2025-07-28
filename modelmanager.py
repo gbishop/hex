@@ -33,12 +33,17 @@ class ModelManager:
         path = self.fullpath(name)
         return MaskablePPO.load(path, **kwargs)
 
-    def save(self, model):
-        name = f"{self.size:02d}-{self.next:03d}"
+    def save(self, model, number=None):
+        if number is None:
+            number = self.next
+            self.next += 1
+        name = f"{self.size:02d}-{number:03d}"
         path = f"{self.dir}/{name}"
-        self.next += 1
         model.save(path)
         return name, path
+
+    def new(self, **kwargs):
+        return MaskablePPO("MlpPolicy", **kwargs)
 
     def fullpath(self, name):
         path = f"{self.dir}/{name}.zip"
